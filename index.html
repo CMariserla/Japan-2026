@@ -122,15 +122,18 @@
       '<div class="card" style="max-width:380px;width:100%;">'+
         '<div class="mono" style="font-size:11px;color:var(--brass);letter-spacing:.1em;">GROUP TRIP PASS</div>'+
         '<h1 class="display" style="margin:.15rem 0 1rem;font-size:26px;">Japan, together</h1>'+
+        '<form id="gate-form">'+
         '<div style="margin-bottom:12px;"><label>Which of you is this?</label>'+
-        '<select id="gate-name">'+ USERS.map(function(u){return '<option value="'+esc(u.username)+'">'+esc(u.displayName)+'</option>';}).join('') +'</select></div>'+
-        '<div style="margin-bottom:14px;"><label>Password</label><input id="gate-pass" type="password" placeholder="Your password"/></div>'+
+        '<select id="gate-name" name="username" autocomplete="username">'+ USERS.map(function(u){return '<option value="'+esc(u.username)+'">'+esc(u.displayName)+'</option>';}).join('') +'</select></div>'+
+        '<div style="margin-bottom:14px;"><label>Password</label><input id="gate-pass" name="password" type="password" autocomplete="current-password" placeholder="Your password"/></div>'+
         '<div id="gate-err" style="color:var(--vermillion);font-size:13px;margin-bottom:10px;display:none;">That password isn\'t right.</div>'+
-        '<button class="btn btn-primary" id="gate-go" style="width:100%;">Enter</button>'+
+        '<button class="btn btn-primary" id="gate-go" type="submit" style="width:100%;">Enter</button>'+
+        '</form>'+
         '<div style="border-top:2px dashed var(--line);margin:.75rem 0;"></div>'+
         '<div style="font-size:12px;color:#8a8171;">Only your group has accounts for this trip.</div>'+
       '</div></div>';
-    document.getElementById('gate-go').onclick = async function(){
+    document.getElementById('gate-form').onsubmit = async function(ev){
+      ev.preventDefault();
       var btn = document.getElementById('gate-go');
       var err = document.getElementById('gate-err');
       err.style.display = 'none';
