@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Japan 2026 Itinerary</title>
+<style>
+  html, body { margin:0; padding:0; }
+  #app * { box-sizing: border-box; }
+  #app { --ink:#22262E; --paper:#F6F1E4; --indigo:#2B3A55; --vermillion:#B8452F; --brass:#A9822F; --moss:#4E6B48; --line:#D8CFB6; }
+  #app .display { font-family: Georgia, 'Times New Roman', serif; }
+  #app .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #app button { cursor:pointer; font-family:inherit; }
+  #app input, #app select, #app textarea { font-family:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--ink); width:100%; }
+  #app input:focus, #app select:focus, #app textarea:focus { outline:2px solid var(--indigo); outline-offset:1px; }
+  #app label { font-size:12px; color:#6b6455; display:block; margin-bottom:3px; text-transform:uppercase; letter-spacing:.04em; }
+  #app .btn { border:1px solid var(--ink); background:transparent; color:var(--ink); padding:8px 14px; border-radius:4px; font-size:13px; font-weight:600; }
+  #app .btn:hover { background:var(--ink); color:var(--paper); }
+  #app .btn-primary { background:var(--vermillion); border-color:var(--vermillion); color:#fff; }
+  #app .btn-primary:hover { background:#963621; border-color:#963621; color:#fff; }
+  #app .btn-ghost { border:none; color:var(--indigo); padding:4px 6px; font-size:12px; font-weight:600; background:none; }
+  #app .btn-ghost:hover { text-decoration:underline; background:none; color:var(--indigo); }
+  #app .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:1rem 1.15rem; margin-bottom:.85rem; }
+  #app .daycell { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.7rem .8rem; text-align:left; width:100%; }
+  #app .daycell:hover { border-color:var(--indigo); }
+  #app .pill { display:flex; gap:8px; align-items:flex-start; padding:7px 10px; background:#fff; border:1px solid var(--line); border-radius:20px; margin-bottom:6px; font-size:13px; }
+  #app .pill .time { font-family:ui-monospace,monospace; color:var(--brass); font-weight:700; flex-shrink:0; width:52px; }
+  #app section.block { margin-top:1.75rem; }
+  #app h2.section-title { font-size:16px; font-weight:600; margin:0 0 .6rem; display:flex; align-items:center; gap:8px; }
+  #app .tag { font-size:10px; text-transform:uppercase; letter-spacing:.05em; background:#EFE8D6; color:var(--brass); padding:2px 7px; border-radius:10px; font-weight:700; }
+</style>
+</head>
+<body>
+
+<div id="app" style="max-width:920px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#22262E;background:#F6F1E4;min-height:100vh;padding:0 0 3rem;">
+  <div id="root"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+(function(){
+  var SUPABASE_URL = "https://asvszzlfpygsjqagmfij.supabase.co";
+  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFzdnN6emxmcHlnc2pxYWdtZmlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwOTEyNzYsImV4cCI6MjA5ODY2NzI3Nn0.Iyh5bAkkA9XeZiDkdQzZoWX6S1YOH5aI1WIiUnO75sc";
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // Trip members. Each has a real Supabase Auth account behind the scenes
+  // (username@japan2026trip.app) but signs in with just a username + password.
+  var USERS = [
+    { username:'chandrahaas', displayName:'Chandrahaas' },
+    { username:'raghav', displayName:'Raghav' },
+    { username:'harout', displayName:'Harout' },
+    { username:'saathvik', displayName:'Saathvik' },
+    { username:'sina', displayName:'Sina' }
+  ];
+  function emailForUsername(u){ return u.toLowerCase() + '@japan2026trip.app'; }
+
+  var root = document.getElementById('root');
+  var state = { view:'main', dayId:null, me:null, profile:null, data:null };
+
+  function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
+  function fmtDate(d){
+    if(!d) return 'no date set';
+    var dt = new Date(d+'T00:00:00');
+    if(isNaN(dt)) return d;
+    return dt.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
+  }
+  function mapsLink(text){
+    if(!text) return '';
+    if(/^https?:\/\//i.test(text)) return text;
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(text);
+  }
+
+  function emptyData(){ return { days: [], suggestions: [], journal: [], stays: [] }; }
+
+  async function logActivity(action, summary){
+    try {
+      await sb.from('activity_log').insert({
+        user_id: state.profile.id,
+        username: state.profile.display_name,
+        action: action,
+        summary: summary
+      });
+    } catch(e){ console.error('activity log failed', e); }
+  }
+
+  async function loadData(){
+    try {
+      var daysRes = await sb.from('days').select('*').order('day_number');
+      var actsRes = await sb.from('activities').select('*').order('time');
+      var staysRes = await sb.from('stays').select('*').order('check_in');
+      var suggRes = await sb.from('suggestions').select('*').order('created_at');
+      var journalRes = await sb.from('journal').select('*').order('date', { ascending:false });
+
+      var days = (daysRes.data||[]).map(function(row){
+        return { id:row.id, dayNumber:row.day_number, date:row.date||'', city:row.city||'', activities:[] };
+      });
+      var byDay = {};
+      days.forEach(function(dd){ byDay[dd.id] = dd; });
+      (actsRes.data||[]).forEach(function(a){
+        var day = byDay[a.day_id];
+        if(day) day.activities.push({ id:a.id, time:a.time||'', activity:a.activity||'', locationLink:a.location_link||'', notes:a.notes||'' });
+      });
+
+      var stays = (staysRes.data||[]).map(function(s){
+        return { id:s.id, name:s.name, checkIn:s.check_in||'', checkOut:s.check_out||'', locationLink:s.location_link||'', notes:s.notes||'' };
+      });
+      var suggestions = (suggRes.data||[]).map(function(s){
+        return { id:s.id, place:s.place, notes:s.notes||'', addedBy:s.added_by_name||'', dayLabel:s.day_label||'' };
+      });
+      var journal = (journalRes.data||[]).map(function(j){
+        return { id:j.id, author:j.author_name||'', date:j.date||'', text:j.text };
+      });
+
+      return { days: days, suggestions: suggestions, journal: journal, stays: stays };
+    } catch(e){ console.error('load failed', e); return emptyData(); }
+  }
+
+  // ---------- LOGIN ----------
+  function renderGate(){
+    root.innerHTML =
+      '<div style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:2rem 1rem;">'+
+      '<div class="card" style="max-width:380px;width:100%;">'+
+        '<div class="mono" style="font-size:11px;color:var(--brass);letter-spacing:.1em;">GROUP TRIP PASS</div>'+
+        '<h1 class="display" style="margin:.15rem 0 1rem;font-size:26px;">Japan, together</h1>'+
+        '<div style="margin-bottom:12px;"><label>Which of you is this?</label>'+
+        '<select id="gate-name">'+ USERS.map(function(u){return '<option value="'+esc(u.username)+'">'+esc(u.displayName)+'</option>';}).join('') +'</select></div>'+
+        '<div style="margin-bottom:14px;"><label>Password</label><input id="gate-pass" type="password" placeholder="Your password"/></div>'+
+        '<div id="gate-err" style="color:var(--vermillion);font-size:13px;margin-bottom:10px;display:none;">That password isn\'t right.</div>'+
+        '<button class="btn btn-primary" id="gate-go" style="width:100%;">Enter</button>'+
+        '<div style="border-top:2px dashed var(--line);margin:.75rem 0;"></div>'+
+        '<div style="font-size:12px;color:#8a8171;">Only your group has accounts for this trip.</div>'+
+      '</div></div>';
+    document.getElementById('gate-go').onclick = async function(){
+      var btn = document.getElementById('gate-go');
+      var err = document.getElementById('gate-err');
+      err.style.display = 'none';
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      var username = document.getElementById('gate-name').value;
+      var pass = document.getElementById('gate-pass').value;
+      var res = await sb.auth.signInWithPassword({ email: emailForUsername(username), password: pass });
+      if(res.error){
+        err.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Enter';
+        return;
+      }
+      await afterLogin();
+    };
+  }
+
+  async function afterLogin(){
+    var userRes = await sb.auth.getUser();
+    var authUser = userRes.data && userRes.data.user;
+    if(!authUser){ renderGate(); return; }
+    var profRes = await sb.from('profiles').select('*').eq('id', authUser.id).single();
+    if(!profRes.data){ await sb.auth.signOut(); renderGate(); return; }
+    state.profile = profRes.data;
+    state.me = state.profile.display_name;
+    await boot();
+  }
+
+  // ---------- SHELL ----------
+  function header(){
+    var adminLink = (state.profile && state.profile.is_admin)
+      ? '<button class="btn-ghost" id="view-log">activity log</button> &middot; '
+      : '';
+    return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;padding:1.75rem 1.25rem 0;">'+
+      '<div><div class="mono" style="font-size:11px;color:var(--brass);letter-spacing:.1em;">GROUP TRIP PASS</div>'+
+      '<h1 class="display" style="margin:.1rem 0 0;font-size:26px;">Japan 2026 Itinerary</h1></div>'+
+      '<div style="text-align:right;font-size:12px;color:#8a8171;padding-top:6px;">'+adminLink+'Signed in as<br><strong style="color:var(--ink);">'+esc(state.me)+'</strong> &middot; <button class="btn-ghost" id="switch-me">sign out</button></div>'+
+    '</div>';
+  }
+  function wireHeader(){
+    document.getElementById('switch-me').onclick = async function(){
+      await sb.auth.signOut();
+      state.me = null; state.profile = null; state.data = null;
+      renderGate();
+    };
+    var logBtn = document.getElementById('view-log');
+    if(logBtn) logBtn.onclick = function(){ state.view='log'; renderView(); };
+  }
+
+  async function boot(){
+    root.innerHTML = '<div style="padding:3rem;text-align:center;color:#8a8171;">Loading trip…</div>';
+    state.data = await loadData();
+    renderView();
+  }
+
+  function renderView(){
+    if(state.view==='day') renderDay();
+    else if(state.view==='log') renderLog();
+    else renderMain();
+  }
+
+  function emptyState(msg){
+    return '<div style="padding:1.5rem 1rem;text-align:center;color:#8a8171;font-size:13px;border:1px dashed var(--line);border-radius:6px;">'+esc(msg)+'</div>';
+  }
+
+  // ---------- MAIN ----------
+  function renderMain(){
+    var d = state.data;
+    var days = d.days.slice().sort(function(a,b){ return a.dayNumber-b.dayNumber; });
+
+    var calCells = days.map(function(day){
+      var actCount = day.activities.length;
+      return '<button class="daycell" data-open-day="'+day.id+'">'+
+        '<div style="font-size:11px;color:var(--brass);font-weight:700;letter-spacing:.04em;">DAY '+day.dayNumber+'</div>'+
+        '<div class="display" style="font-size:15px;margin:2px 0;">'+esc(day.city||'Unplanned')+'</div>'+
+        '<div style="font-size:11px;color:#8a8171;">'+esc(fmtDate(day.date))+'</div>'+
+        '<div style="font-size:11px;color:#8a8171;margin-top:4px;">'+actCount+' activit'+(actCount===1?'y':'ies')+'</div>'+
+      '</button>';
+    }).join('');
+
+    var allActs = [];
+    days.forEach(function(day){
+      day.activities.forEach(function(a){ allActs.push({day:day, act:a}); });
+    });
+    allActs.sort(function(x,y){ return x.day.dayNumber-y.day.dayNumber || (x.act.time||'').localeCompare(y.act.time||''); });
+
+    var journal = d.journal.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+    var suggestions = d.suggestions.slice().reverse();
+    var stays = d.stays.slice().sort(function(a,b){ return (a.checkIn||'').localeCompare(b.checkIn||''); });
+
+    root.innerHTML = header() +
+      '<div style="padding:0 1.25rem;">'+
+        '<section class="block">'+
+          '<h2 class="section-title">Calendar <span class="tag">'+days.length+' days</span></h2>'+
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;">'+
+            calCells +
+            '<button class="daycell" id="add-day" style="display:flex;align-items:center;justify-content:center;color:var(--indigo);font-weight:600;font-size:13px;border-style:dashed;">+ Add day</button>'+
+          '</div>'+
+        '</section>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">Stays <span class="tag">lodging</span></h2>'+
+          (stays.length ? stays.map(function(s){
+            return '<div class="card" style="margin-bottom:.5rem;padding:.75rem 1rem;">'+
+              '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+                '<div><strong style="font-size:14px;">'+esc(s.name)+'</strong>'+
+                (s.locationLink?' &middot; <a href="'+esc(mapsLink(s.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
+                '<div style="font-size:11px;color:var(--brass);margin-top:3px;">'+esc(fmtDate(s.checkIn))+' &rarr; '+esc(fmtDate(s.checkOut))+'</div>'+
+                (s.notes?'<div style="font-size:12px;color:#8a8171;margin-top:3px;">'+esc(s.notes)+'</div>':'')+
+                '</div>'+
+                '<button class="btn-ghost" data-del-stay="'+s.id+'" style="color:var(--vermillion);">remove</button>'+
+              '</div></div>';
+          }).join('') : emptyState('No stays added yet.'))+
+          '<button class="btn" id="add-stay" style="margin-top:.4rem;">+ Add a stay</button>'+
+        '</section>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">All activities</h2>'+
+          (allActs.length ? allActs.map(function(x){
+            return '<div class="pill">'+
+              '<span class="time">D'+x.day.dayNumber+'</span>'+
+              '<span class="time">'+esc(x.act.time||'')+'</span>'+
+              '<span style="flex:1;">'+esc(x.act.activity)+
+                (x.act.locationLink?' &middot; <a href="'+esc(mapsLink(x.act.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
+                (x.act.notes?'<div style="font-size:11px;color:#8a8171;">'+esc(x.act.notes)+'</div>':'')+
+              '</span>'+
+            '</div>';
+          }).join('') : emptyState('No activities added yet — click into a day to add some.'))+
+        '</section>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">Suggestions <span class="tag">not yet scheduled</span></h2>'+
+          '<div id="suggestions-list">'+
+            (suggestions.length ? suggestions.map(function(s){
+              return '<div class="card" style="margin-bottom:.5rem;padding:.75rem 1rem;">'+
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+                  '<div><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
+                  (s.notes?'<div style="font-size:12px;color:#8a8171;">'+esc(s.notes)+'</div>':'')+
+                  '<div style="font-size:11px;color:var(--brass);margin-top:3px;">suggested by '+esc(s.addedBy)+(s.dayLabel?' &middot; for '+esc(s.dayLabel):'')+'</div></div>'+
+                  '<button class="btn-ghost" data-del-sugg="'+s.id+'" style="color:var(--vermillion);">remove</button>'+
+                '</div></div>';
+            }).join('') : emptyState('No suggestions yet.'))+
+          '</div>'+
+          '<button class="btn" id="add-sugg-main" style="margin-top:.4rem;">+ Suggest a place</button>'+
+        '</section>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">Journal</h2>'+
+          (journal.length ? journal.map(function(j){
+            return '<div class="card" style="margin-bottom:.5rem;">'+
+              '<div style="display:flex;justify-content:space-between;font-size:11px;color:#8a8171;margin-bottom:4px;">'+
+                '<span>'+esc(j.author)+'</span><span>'+esc(fmtDate(j.date))+'</span></div>'+
+              '<div style="font-size:14px;white-space:pre-wrap;">'+esc(j.text)+'</div>'+
+              '<div style="text-align:right;margin-top:6px;"><button class="btn-ghost" data-del-journal="'+j.id+'" style="color:var(--vermillion);">delete</button></div>'+
+            '</div>';
+          }).join('') : emptyState('No journal entries yet.'))+
+          '<button class="btn btn-primary" id="add-journal" style="margin-top:.4rem;">+ Write an entry</button>'+
+        '</section>'+
+      '</div>';
+
+    wireHeader();
+    Array.prototype.forEach.call(root.querySelectorAll('[data-open-day]'), function(b){
+      b.onclick = function(){ state.view='day'; state.dayId=b.getAttribute('data-open-day'); renderView(); };
+    });
+    document.getElementById('add-day').onclick = async function(){
+      var maxNum = d.days.reduce(function(m,x){return Math.max(m,x.dayNumber);},0);
+      var ins = await sb.from('days').insert({ day_number: maxNum+1 }).select().single();
+      if(ins.data){
+        d.days.push({ id:ins.data.id, dayNumber:ins.data.day_number, date:'', city:'', activities:[] });
+        await logActivity('add_day', 'added Day '+ins.data.day_number);
+      }
+      renderView();
+    };
+
+    document.getElementById('add-stay').onclick = function(){ openStayForm(); };
+    Array.prototype.forEach.call(root.querySelectorAll('[data-del-stay]'), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute('data-del-stay');
+        var stay = d.stays.find(function(s){return s.id===id;});
+        await sb.from('stays').delete().eq('id', id);
+        d.stays = d.stays.filter(function(s){return s.id!==id;});
+        await logActivity('delete_stay', 'removed the stay "'+(stay?stay.name:'')+'"');
+        renderView();
+      };
+    });
+
+    document.getElementById('add-sugg-main').onclick = function(){ openSuggestionForm(null); };
+    Array.prototype.forEach.call(root.querySelectorAll('[data-del-sugg]'), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute('data-del-sugg');
+        var s = d.suggestions.find(function(x){return x.id===id;});
+        await sb.from('suggestions').delete().eq('id', id);
+        d.suggestions = d.suggestions.filter(function(x){return x.id!==id;});
+        await logActivity('delete_suggestion', 'removed the suggestion "'+(s?s.place:'')+'"');
+        renderView();
+      };
+    });
+
+    document.getElementById('add-journal').onclick = function(){ openJournalForm(); };
+    Array.prototype.forEach.call(root.querySelectorAll('[data-del-journal]'), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute('data-del-journal');
+        await sb.from('journal').delete().eq('id', id);
+        d.journal = d.journal.filter(function(j){return j.id!==id;});
+        await logActivity('delete_journal', 'deleted a journal entry');
+        renderView();
+      };
+    });
+  }
+
+  // ---------- DAY VIEW ----------
+  function renderDay(){
+    var d = state.data;
+    var day = d.days.find(function(x){return x.id===state.dayId;});
+    if(!day){ state.view='main'; return renderView(); }
+    var acts = day.activities.slice().sort(function(a,b){return (a.time||'').localeCompare(b.time||'');});
+
+    root.innerHTML = header() +
+      '<div style="padding:0 1.25rem;">'+
+        '<button class="btn-ghost" id="back-main" style="margin:1rem 0 .5rem;">&larr; back to calendar</button>'+
+        '<div class="card">'+
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">'+
+            '<div style="flex:1;min-width:180px;"><label>City / area</label><input id="day-city" value="'+esc(day.city||'')+'" placeholder="e.g. Kyoto"/></div>'+
+            '<div style="flex:1;min-width:180px;"><label>Date</label><input id="day-date" type="date" value="'+esc(day.date||'')+'"/></div>'+
+          '</div>'+
+          '<div style="margin-top:8px;"><button class="btn-ghost" id="save-day-meta">save</button> '+
+          '<button class="btn-ghost" id="remove-day" style="color:var(--vermillion);">remove this day</button></div>'+
+        '</div>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">Day '+day.dayNumber+' plan</h2>'+
+          '<div id="acts-list">'+
+            (acts.length ? acts.map(function(a){
+              return '<div class="pill" style="border-radius:8px;align-items:center;">'+
+                '<span class="time">'+esc(a.time||'')+'</span>'+
+                '<span style="flex:1;">'+esc(a.activity)+
+                  (a.locationLink?' &middot; <a href="'+esc(mapsLink(a.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
+                  (a.notes?'<div style="font-size:11px;color:#8a8171;">'+esc(a.notes)+'</div>':'')+
+                '</span>'+
+                '<button class="btn-ghost" data-del-act="'+a.id+'" style="color:var(--vermillion);">&times;</button>'+
+              '</div>';
+            }).join('') : emptyState('No activities yet for this day.'))+
+          '</div>'+
+          '<button class="btn btn-primary" id="add-act" style="margin-top:.6rem;">+ Add activity</button>'+
+        '</section>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">Have an idea for this day?</h2>'+
+          '<div style="font-size:12px;color:#8a8171;margin-bottom:.5rem;">Suggestions go to the group Suggestions box on the main page — they won\'t show up in this day\'s plan until someone adds them as a real activity above.</div>'+
+          '<button class="btn" id="add-sugg-day">+ Suggest a place for day '+day.dayNumber+'</button>'+
+        '</section>'+
+      '</div>';
+
+    wireHeader();
+    document.getElementById('back-main').onclick = function(){ state.view='main'; renderView(); };
+    document.getElementById('save-day-meta').onclick = async function(){
+      var city = document.getElementById('day-city').value;
+      var date = document.getElementById('day-date').value;
+      await sb.from('days').update({ city:city, date: date||null }).eq('id', day.id);
+      day.city = city; day.date = date;
+      await logActivity('update_day', 'updated Day '+day.dayNumber+(city?' ('+city+')':''));
+      renderView();
+    };
+    document.getElementById('remove-day').onclick = async function(){
+      await sb.from('days').delete().eq('id', day.id);
+      d.days = d.days.filter(function(x){return x.id!==day.id;});
+      await logActivity('delete_day', 'removed Day '+day.dayNumber);
+      state.view='main'; renderView();
+    };
+    document.getElementById('add-act').onclick = function(){ openActivityForm(day); };
+    Array.prototype.forEach.call(root.querySelectorAll('[data-del-act]'), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute('data-del-act');
+        var a = day.activities.find(function(x){return x.id===id;});
+        await sb.from('activities').delete().eq('id', id);
+        day.activities = day.activities.filter(function(x){return x.id!==id;});
+        await logActivity('delete_activity', 'removed "'+(a?a.activity:'')+'" from Day '+day.dayNumber);
+        renderView();
+      };
+    });
+    document.getElementById('add-sugg-day').onclick = function(){ openSuggestionForm('Day '+day.dayNumber+(day.city?' ('+day.city+')':'')); };
+  }
+
+  // ---------- ACTIVITY LOG (admin only) ----------
+  async function renderLog(){
+    if(!state.profile || !state.profile.is_admin){ state.view='main'; renderView(); return; }
+    root.innerHTML = header() +
+      '<div style="padding:0 1.25rem;">'+
+        '<button class="btn-ghost" id="back-main" style="margin:1rem 0 .5rem;">&larr; back to calendar</button>'+
+        '<section class="block">'+
+          '<h2 class="section-title">Activity log <span class="tag">admin only</span></h2>'+
+          '<div id="log-list">'+emptyState('Loading…')+'</div>'+
+        '</section>'+
+      '</div>';
+    wireHeader();
+    document.getElementById('back-main').onclick = function(){ state.view='main'; renderView(); };
+
+    var res = await sb.from('activity_log').select('*').order('created_at', { ascending:false }).limit(300);
+    var entries = res.data || [];
+    document.getElementById('log-list').innerHTML = entries.length ? entries.map(function(e){
+      var when = e.created_at ? new Date(e.created_at).toLocaleString() : '';
+      return '<div class="pill" style="align-items:flex-start;">'+
+        '<span class="time" style="width:auto;white-space:nowrap;">'+esc(when)+'</span>'+
+        '<span style="flex:1;"><strong>'+esc(e.username||'someone')+'</strong> '+esc(e.summary)+'</span>'+
+      '</div>';
+    }).join('') : emptyState('No activity yet.');
+  }
+
+  // ---------- FORMS ----------
+  function field(key,label,type,val,placeholder){
+    return '<div style="margin-bottom:10px;"><label>'+esc(label)+'</label><input data-field="'+key+'" type="'+type+'" value="'+esc(val||'')+'" placeholder="'+esc(placeholder||'')+'"/></div>';
+  }
+  function closeOverlay(){ var o=document.getElementById('form-overlay'); if(o) o.remove(); }
+  function formOverlay(title, fieldsHtml, onSave){
+    closeOverlay();
+    var wrap = document.createElement('div');
+    wrap.id = 'form-overlay';
+    wrap.innerHTML =
+      '<div style="position:absolute;inset:0;background:rgba(34,38,46,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 1rem;z-index:10;">'+
+        '<div style="background:#fff;border-radius:8px;max-width:420px;width:100%;padding:1.25rem 1.25rem 1rem;">'+
+          '<h3 class="display" style="margin:0 0 .75rem;font-size:18px;">'+esc(title)+'</h3>'+
+          fieldsHtml+
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'+
+            '<button class="btn" id="form-cancel">Cancel</button>'+
+            '<button class="btn btn-primary" id="form-save">Save</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    wrap.style.cssText = 'min-height:100vh;position:relative;';
+    document.getElementById('app').appendChild(wrap);
+    document.getElementById('form-cancel').onclick = closeOverlay;
+    document.getElementById('form-save').onclick = function(){
+      var vals = {};
+      Array.prototype.forEach.call(wrap.querySelectorAll('[data-field]'), function(i){ vals[i.getAttribute('data-field')] = i.value; });
+      onSave(vals);
+    };
+    return wrap;
+  }
+
+  function openActivityForm(day){
+    formOverlay('Add activity',
+      field('time','Time','time','')+
+      field('activity','What','text','','e.g. Fushimi Inari hike')+
+      field('locationLink','Location (name or a maps link)','text','','e.g. Fushimi Inari Taisha')+
+      field('notes','Notes — cost, timing, tickets, etc. (optional)','text',''),
+      async function(vals){
+        var ins = await sb.from('activities').insert({
+          day_id: day.id, time: vals.time, activity: vals.activity, location_link: vals.locationLink, notes: vals.notes
+        }).select().single();
+        if(ins.data){
+          day.activities.push({ id:ins.data.id, time:ins.data.time, activity:ins.data.activity, locationLink:ins.data.location_link, notes:ins.data.notes });
+          await logActivity('add_activity', 'added "'+vals.activity+'" to Day '+day.dayNumber);
+        }
+        closeOverlay(); renderView();
+      });
+  }
+
+  function openSuggestionForm(dayLabel){
+    formOverlay('Suggest a place',
+      field('place','Place name','text','','e.g. Ichiran Ramen Shibuya')+
+      field('notes','Notes (optional)','text',''),
+      async function(vals){
+        var ins = await sb.from('suggestions').insert({
+          place: vals.place, notes: vals.notes, added_by: state.profile.id, added_by_name: state.profile.display_name, day_label: dayLabel||''
+        }).select().single();
+        if(ins.data){
+          state.data.suggestions.push({ id:ins.data.id, place:ins.data.place, notes:ins.data.notes, addedBy:ins.data.added_by_name, dayLabel:ins.data.day_label });
+          await logActivity('add_suggestion', 'suggested "'+vals.place+'"'+(dayLabel?' for '+dayLabel:''));
+        }
+        closeOverlay(); renderView();
+      });
+  }
+
+  function openStayForm(){
+    formOverlay('Add a stay',
+      field('name','Place name','text','','e.g. Kyoto Granbell Hotel')+
+      field('checkIn','Check-in','date','')+
+      field('checkOut','Check-out','date','')+
+      field('locationLink','Location (name or a maps link)','text','')+
+      field('notes','Notes (optional)','text',''),
+      async function(vals){
+        var ins = await sb.from('stays').insert({
+          name: vals.name, check_in: vals.checkIn||null, check_out: vals.checkOut||null, location_link: vals.locationLink, notes: vals.notes
+        }).select().single();
+        if(ins.data){
+          state.data.stays.push({ id:ins.data.id, name:ins.data.name, checkIn:ins.data.check_in, checkOut:ins.data.check_out, locationLink:ins.data.location_link, notes:ins.data.notes });
+          await logActivity('add_stay', 'added the stay "'+vals.name+'"');
+        }
+        closeOverlay(); renderView();
+      });
+  }
+
+  function openJournalForm(){
+    closeOverlay();
+    var wrap = document.createElement('div');
+    wrap.id = 'form-overlay';
+    wrap.style.cssText = 'min-height:100vh;position:relative;';
+    wrap.innerHTML =
+      '<div style="position:absolute;inset:0;background:rgba(34,38,46,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 1rem;z-index:10;">'+
+        '<div style="background:#fff;border-radius:8px;max-width:420px;width:100%;padding:1.25rem 1.25rem 1rem;">'+
+          '<h3 class="display" style="margin:0 0 .75rem;font-size:18px;">Write a journal entry</h3>'+
+          '<div style="margin-bottom:10px;"><label>Date</label><input id="j-date" type="date"/></div>'+
+          '<div style="margin-bottom:10px;"><label>Entry</label><textarea id="j-text" rows="5" placeholder="What happened today..."></textarea></div>'+
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'+
+            '<button class="btn" id="form-cancel">Cancel</button>'+
+            '<button class="btn btn-primary" id="form-save">Save</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    document.getElementById('app').appendChild(wrap);
+    document.getElementById('form-cancel').onclick = closeOverlay;
+    document.getElementById('form-save').onclick = async function(){
+      var date = document.getElementById('j-date').value;
+      var text = document.getElementById('j-text').value;
+      if(!text.trim()) { closeOverlay(); return; }
+      var ins = await sb.from('journal').insert({
+        author: state.profile.id, author_name: state.profile.display_name, date: date||null, text: text
+      }).select().single();
+      if(ins.data){
+        state.data.journal.push({ id:ins.data.id, author:ins.data.author_name, date:ins.data.date, text:ins.data.text });
+        await logActivity('add_journal', 'wrote a journal entry');
+      }
+      closeOverlay(); renderView();
+    };
+  }
+
+  (async function init(){
+    var sessionRes = await sb.auth.getSession();
+    if(sessionRes.data && sessionRes.data.session){ await afterLogin(); }
+    else { renderGate(); }
+  })();
+})();
+</script>
+</body>
+</html>
