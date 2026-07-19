@@ -346,11 +346,19 @@
   }
 
   // ---------- DAY VIEW ----------
+  function staysForDate(date){
+    if(!date) return [];
+    return state.data.stays.filter(function(s){
+      return s.checkIn && s.checkOut && s.checkIn <= date && date <= s.checkOut;
+    });
+  }
+
   function renderDay(){
     var d = state.data;
     var day = d.days.find(function(x){return x.id===state.dayId;});
     if(!day){ state.view='main'; return renderView(); }
     var acts = day.activities.slice().sort(function(a,b){return (a.time||'').localeCompare(b.time||'');});
+    var matchingStays = staysForDate(day.date);
 
     root.innerHTML = header() +
       '<div style="padding:0 1.25rem;">'+
@@ -363,6 +371,18 @@
           '<div style="margin-top:8px;"><button class="btn-ghost" id="save-day-meta">save</button> '+
           '<button class="btn-ghost" id="remove-day" style="color:var(--vermillion);">remove this day</button></div>'+
         '</div>'+
+
+        (matchingStays.length ? '<section class="block">'+
+          '<h2 class="section-title">Where you\'re staying</h2>'+
+          matchingStays.map(function(s){
+            return '<div class="card" style="padding:.75rem 1rem;">'+
+              '<strong style="font-size:14px;">'+esc(s.name)+'</strong>'+
+              (s.locationLink?' &middot; <a href="'+esc(mapsLink(s.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
+              '<div style="font-size:11px;color:var(--brass);margin-top:3px;">'+esc(fmtDate(s.checkIn))+' &rarr; '+esc(fmtDate(s.checkOut))+'</div>'+
+              (s.notes?'<div style="font-size:12px;color:#8a8171;margin-top:3px;">'+esc(s.notes)+'</div>':'')+
+            '</div>';
+          }).join('')+
+        '</section>' : '')+
 
         '<section class="block">'+
           '<h2 class="section-title">Day '+day.dayNumber+' plan</h2>'+
