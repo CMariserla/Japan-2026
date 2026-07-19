@@ -66,6 +66,12 @@
     if(isNaN(dt)) return d;
     return dt.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   }
+  function fmtDateShort(d){
+    if(!d) return 'No date';
+    var dt = new Date(d+'T00:00:00');
+    if(isNaN(dt)) return d;
+    return dt.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+  }
   function mapsLink(text){
     if(!text) return '';
     if(/^https?:\/\//i.test(text)) return text;
@@ -240,9 +246,8 @@
     var calCells = days.map(function(day){
       var actCount = day.activities.length;
       return '<button class="daycell" data-open-day="'+day.id+'" data-drop-day="'+day.id+'">'+
-        '<div style="font-size:11px;color:var(--brass);font-weight:700;letter-spacing:.04em;">DAY '+day.dayNumber+'</div>'+
-        '<div class="display" style="font-size:15px;margin:2px 0;">'+esc(day.city||'Unplanned')+'</div>'+
-        '<div style="font-size:11px;color:#8a8171;">'+esc(fmtDate(day.date))+'</div>'+
+        '<div class="display" style="font-size:15px;margin:0 0 2px;">'+esc(fmtDateShort(day.date))+'</div>'+
+        '<div style="font-size:11px;color:var(--brass);font-weight:700;letter-spacing:.04em;">DAY '+day.dayNumber+(day.city?' &middot; '+esc(day.city):'')+'</div>'+
         '<div style="font-size:11px;color:#8a8171;margin-top:4px;">'+actCount+' activit'+(actCount===1?'y':'ies')+'</div>'+
       '</button>';
     }).join('');
@@ -479,7 +484,8 @@
     return '<option value="">Not scheduled to a day</option>'+
       days.map(function(day){
         var label = dayLabelFor(day);
-        return '<option value="'+esc(label)+'"'+(selectedLabel===label?' selected':'')+'>'+esc(label)+'</option>';
+        var display = label + (day.date ? ' — '+fmtDate(day.date) : '');
+        return '<option value="'+esc(label)+'"'+(selectedLabel===label?' selected':'')+'>'+esc(display)+'</option>';
       }).join('');
   }
 
