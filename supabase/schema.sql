@@ -65,6 +65,7 @@ create table public.suggestions (
   id uuid primary key default gen_random_uuid(),
   place text not null,
   notes text,
+  location_link text,
   added_by uuid references public.profiles(id),
   added_by_name text,
   day_label text,
@@ -89,6 +90,18 @@ create table public.activity_log (
   created_at timestamptz not null default now()
 );
 
+create table public.travel (
+  id uuid primary key default gen_random_uuid(),
+  name text,
+  type text,
+  departure_location text,
+  departure_at timestamp,
+  arrival_location text,
+  arrival_at timestamp,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
 -- ---------- row level security ----------
 alter table public.profiles enable row level security;
 alter table public.days enable row level security;
@@ -97,6 +110,7 @@ alter table public.stays enable row level security;
 alter table public.suggestions enable row level security;
 alter table public.journal enable row level security;
 alter table public.activity_log enable row level security;
+alter table public.travel enable row level security;
 
 -- only the 5 signed-in trip members can read profiles (needed to show display names / admin flag)
 create policy "trip members can read profiles" on public.profiles
@@ -112,6 +126,8 @@ create policy "trip members full access" on public.stays
 create policy "trip members full access" on public.suggestions
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "trip members full access" on public.journal
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "trip members full access" on public.travel
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 
 -- activity_log: anyone signed in can add an entry, but only the admin can read the feed

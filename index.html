@@ -71,8 +71,36 @@
     if(/^https?:\/\//i.test(text)) return text;
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(text);
   }
+  function fmtDateTime(str){
+    if(!str) return '';
+    var dt = new Date(str);
+    if(isNaN(dt)) return str;
+    return dt.toLocaleString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  }
+  function fmtDuration(startStr, endStr){
+    if(!startStr || !endStr) return '';
+    var start = new Date(startStr), end = new Date(endStr);
+    if(isNaN(start) || isNaN(end)) return '';
+    var ms = end - start;
+    if(ms <= 0) return '—';
+    var totalMin = Math.round(ms/60000);
+    var h = Math.floor(totalMin/60), m = totalMin%60;
+    return h+'h '+(m<10?'0':'')+m+'m';
+  }
+  function localDateStr(dt){
+    var mm = String(dt.getMonth()+1).padStart(2,'0');
+    var dd = String(dt.getDate()).padStart(2,'0');
+    return dt.getFullYear()+'-'+mm+'-'+dd;
+  }
+  function todayStr(){ return localDateStr(new Date()); }
+  function addDaysStr(dateStr, n){
+    var dt = new Date(dateStr+'T00:00:00');
+    dt.setDate(dt.getDate()+n);
+    return localDateStr(dt);
+  }
+  function dateOnly(dtStr){ return dtStr ? dtStr.slice(0,10) : ''; }
 
-  function emptyData(){ return { days: [], suggestions: [], journal: [], stays: [] }; }
+  function emptyData(){ return { days: [], suggestions: [], journal: [], stays: [], travel: [] }; }
 
   async function logActivity(action, summary){
     try {
@@ -92,6 +120,7 @@
       var staysRes = await sb.from('stays').select('*').order('check_in');
       var suggRes = await sb.from('suggestions').select('*').order('created_at');
       var journalRes = await sb.from('journal').select('*').order('date', { ascending:false });
+      var travelRes = await sb.from('travel').select('*').order('departure_at');
 
       var days = (daysRes.data||[]).map(function(row){
         return { id:row.id, dayNumber:row.day_number, date:row.date||'', city:row.city||'', activities:[] };
@@ -107,13 +136,16 @@
         return { id:s.id, name:s.name, checkIn:s.check_in||'', checkOut:s.check_out||'', locationLink:s.location_link||'', notes:s.notes||'' };
       });
       var suggestions = (suggRes.data||[]).map(function(s){
-        return { id:s.id, place:s.place, notes:s.notes||'', addedBy:s.added_by_name||'', dayLabel:s.day_label||'' };
+        return { id:s.id, place:s.place, notes:s.notes||'', locationLink:s.location_link||'', addedBy:s.added_by_name||'', dayLabel:s.day_label||'' };
       });
       var journal = (journalRes.data||[]).map(function(j){
         return { id:j.id, author:j.author_name||'', date:j.date||'', text:j.text };
       });
+      var travel = (travelRes.data||[]).map(function(t){
+        return { id:t.id, name:t.name||'', type:t.type||'', departureLocation:t.departure_location||'', departureAt:t.departure_at||'', arrivalLocation:t.arrival_location||'', arrivalAt:t.arrival_at||'', notes:t.notes||'' };
+      });
 
-      return { days: days, suggestions: suggestions, journal: journal, stays: stays };
+      return { days: days, suggestions: suggestions, journal: journal, stays: stays, travel: travel };
     } catch(e){ console.error('load failed', e); return emptyData(); }
   }
 
@@ -215,15 +247,27 @@
       '</button>';
     }).join('');
 
-    var allActs = [];
-    days.forEach(function(day){
-      day.activities.forEach(function(a){ allActs.push({day:day, act:a}); });
-    });
-    allActs.sort(function(x,y){ return x.day.dayNumber-y.day.dayNumber || (x.act.time||'').localeCompare(y.act.time||''); });
-
     var journal = d.journal.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
     var suggestions = d.suggestions.filter(function(s){ return !s.dayLabel; }).slice().reverse();
     var stays = d.stays.slice().sort(function(a,b){ return (a.checkIn||'').localeCompare(b.checkIn||''); });
+    var travel = d.travel.slice().sort(function(a,b){ return (a.departureAt||'').localeCompare(b.departureAt||''); });
+
+    var today = todayStr();
+    var tomorrow = addDaysStr(today, 1);
+    var travelToday = travel.filter(function(t){ return dateOnly(t.departureAt)===today || dateOnly(t.arrivalAt)===today; });
+    var travelTomorrow = travel.filter(function(t){ return dateOnly(t.departureAt)===tomorrow || dateOnly(t.arrivalAt)===tomorrow; });
+    var todayDay = days.find(function(dy){ return dy.date===today; });
+    var todayActs = todayDay ? todayDay.activities.slice().sort(function(a,b){return (a.time||'').localeCompare(b.time||'');}) : [];
+    var todaySuggestions = todayDay ? d.suggestions.filter(function(s){ return s.dayLabel===dayLabelFor(todayDay); }) : [];
+    function travelBanner(t, label, bg){
+      var dur = fmtDuration(t.departureAt, t.arrivalAt);
+      return '<div style="background:'+bg+';color:#fff;border-radius:8px;padding:.75rem 1rem;margin-bottom:.5rem;">'+
+        '<div class="mono" style="font-size:11px;letter-spacing:.08em;opacity:.85;">'+label+'</div>'+
+        '<strong style="font-size:15px;">'+esc(t.name)+'</strong>'+(t.type?' &middot; '+esc(t.type):'')+
+        '<div style="font-size:13px;margin-top:4px;">'+esc(t.departureLocation)+' '+esc(fmtDateTime(t.departureAt))+
+          ' &rarr; '+esc(t.arrivalLocation)+' '+esc(fmtDateTime(t.arrivalAt))+(dur?' &middot; '+esc(dur):'')+'</div>'+
+      '</div>';
+    }
 
     root.innerHTML = header() +
       '<div style="padding:0 1.25rem;">'+
@@ -233,6 +277,24 @@
             calCells +
             '<button class="daycell" id="add-day" style="display:flex;align-items:center;justify-content:center;color:var(--indigo);font-weight:600;font-size:13px;border-style:dashed;">+ Add day</button>'+
           '</div>'+
+        '</section>'+
+
+        '<section class="block">'+
+          '<h2 class="section-title">Travel <span class="tag">flights &amp; transit</span></h2>'+
+          (travel.length ? travel.map(function(t){
+            var dur = fmtDuration(t.departureAt, t.arrivalAt);
+            return '<div class="card" style="margin-bottom:.5rem;padding:.75rem 1rem;">'+
+              '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+                '<div><strong style="font-size:14px;">'+esc(t.name)+'</strong>'+
+                (t.type?' <span class="tag">'+esc(t.type)+'</span>':'')+
+                '<div style="font-size:12px;margin-top:4px;">'+esc(t.departureLocation)+' &middot; '+esc(fmtDateTime(t.departureAt))+'</div>'+
+                '<div style="font-size:12px;">&darr; '+(dur?'<span style="color:var(--brass);">'+esc(dur)+'</span> &middot; ':'')+esc(t.arrivalLocation)+' &middot; '+esc(fmtDateTime(t.arrivalAt))+'</div>'+
+                (t.notes?'<div style="font-size:12px;color:#8a8171;margin-top:3px;">'+esc(t.notes)+'</div>':'')+
+                '</div>'+
+                '<button class="btn-ghost" data-del-travel="'+t.id+'" style="color:var(--vermillion);">remove</button>'+
+              '</div></div>';
+          }).join('') : emptyState('No travel added yet.'))+
+          '<button class="btn" id="add-travel" style="margin-top:.4rem;">+ Add travel</button>'+
         '</section>'+
 
         '<section class="block">'+
@@ -251,18 +313,33 @@
           '<button class="btn" id="add-stay" style="margin-top:.4rem;">+ Add a stay</button>'+
         '</section>'+
 
+        travelToday.map(function(t){ return travelBanner(t, 'TRAVEL TODAY', 'var(--vermillion)'); }).join('')+
+        travelTomorrow.map(function(t){ return travelBanner(t, 'TRAVEL TOMORROW', 'var(--indigo)'); }).join('')+
+
         '<section class="block">'+
-          '<h2 class="section-title">All activities</h2>'+
-          (allActs.length ? allActs.map(function(x){
-            return '<div class="pill">'+
-              '<span class="time">D'+x.day.dayNumber+'</span>'+
-              '<span class="time">'+esc(x.act.time||'')+'</span>'+
-              '<span style="flex:1;">'+esc(x.act.activity)+
-                (x.act.locationLink?' &middot; <a href="'+esc(mapsLink(x.act.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
-                (x.act.notes?'<div style="font-size:11px;color:#8a8171;">'+esc(x.act.notes)+'</div>':'')+
-              '</span>'+
-            '</div>';
-          }).join('') : emptyState('No activities added yet — click into a day to add some.'))+
+          '<h2 class="section-title">Today\'s Itinerary'+
+            (todayDay ? ' <span class="tag">'+esc(dayLabelFor(todayDay))+'</span>' : ' <span class="tag">'+esc(fmtDate(today))+'</span>')+
+          '</h2>'+
+          ((todayActs.length || todaySuggestions.length) ? (
+            todayActs.map(function(a){
+              return '<div class="pill">'+
+                '<span class="time">'+esc(a.time||'')+'</span>'+
+                '<span style="flex:1;">'+esc(a.activity)+
+                  (a.locationLink?' &middot; <a href="'+esc(mapsLink(a.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
+                  (a.notes?'<div style="font-size:11px;color:#8a8171;">'+esc(a.notes)+'</div>':'')+
+                '</span>'+
+              '</div>';
+            }).join('')+
+            todaySuggestions.map(function(s){
+              return '<div class="pill" style="border-style:dashed;">'+
+                '<span class="tag" style="flex-shrink:0;">idea</span>'+
+                '<span style="flex:1;">'+esc(s.place)+
+                  (s.locationLink?' &middot; <a href="'+esc(mapsLink(s.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
+                  (s.notes?'<div style="font-size:11px;color:#8a8171;">'+esc(s.notes)+'</div>':'')+
+                '</span>'+
+              '</div>';
+            }).join('')
+          ) : emptyState('Nothing planned for today.'))+
         '</section>'+
 
         '<section class="block">'+
@@ -274,6 +351,7 @@
               return '<div class="card" draggable="true" data-drag-sugg="'+s.id+'" style="margin-bottom:.5rem;padding:.75rem 1rem;cursor:grab;">'+
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
                   '<div style="flex:1;"><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
+                  (s.locationLink?' &middot; <a href="'+esc(mapsLink(s.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
                   (s.notes?'<div style="font-size:12px;color:#8a8171;">'+esc(s.notes)+'</div>':'')+
                   '<div style="font-size:11px;color:var(--brass);margin-top:3px;">suggested by '+esc(s.addedBy)+'</div>'+
                   '<div style="margin-top:6px;max-width:220px;"><select data-assign-sugg="'+s.id+'" style="font-size:12px;padding:4px 6px;">'+dayOptions+'</select></div>'+
@@ -326,6 +404,18 @@
       }
       renderView();
     };
+
+    document.getElementById('add-travel').onclick = function(){ openTravelForm(); };
+    Array.prototype.forEach.call(root.querySelectorAll('[data-del-travel]'), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute('data-del-travel');
+        var t = d.travel.find(function(x){return x.id===id;});
+        await sb.from('travel').delete().eq('id', id);
+        d.travel = d.travel.filter(function(x){return x.id!==id;});
+        await logActivity('delete_travel', 'removed the travel entry "'+(t?t.name:'')+'"');
+        renderView();
+      };
+    });
 
     document.getElementById('add-stay').onclick = function(){ openStayForm(); };
     Array.prototype.forEach.call(root.querySelectorAll('[data-del-stay]'), function(b){
@@ -393,6 +483,33 @@
       }).join('');
   }
 
+  async function promoteSuggestionToActivity(day, suggestion){
+    var ins = await sb.from('activities').insert({
+      day_id: day.id, time:'', activity: suggestion.place, location_link: suggestion.locationLink||'', notes: suggestion.notes
+    }).select().single();
+    if(ins.data){
+      day.activities.push({ id:ins.data.id, time:ins.data.time||'', activity:ins.data.activity, locationLink:ins.data.location_link||'', notes:ins.data.notes||'' });
+    }
+    await sb.from('suggestions').delete().eq('id', suggestion.id);
+    state.data.suggestions = state.data.suggestions.filter(function(x){return x.id!==suggestion.id;});
+    await logActivity('promote_suggestion', 'added the suggestion "'+suggestion.place+'" to Day '+day.dayNumber+'\'s plan');
+    renderView();
+  }
+
+  async function demoteActivityToSuggestion(day, activity, target){
+    var dayLabel = target==='this-day' ? dayLabelFor(day) : '';
+    await sb.from('activities').delete().eq('id', activity.id);
+    day.activities = day.activities.filter(function(x){return x.id!==activity.id;});
+    var ins = await sb.from('suggestions').insert({
+      place: activity.activity, notes: activity.notes||'', location_link: activity.locationLink||'', added_by: state.profile.id, added_by_name: state.profile.display_name, day_label: dayLabel
+    }).select().single();
+    if(ins.data){
+      state.data.suggestions.push({ id:ins.data.id, place:ins.data.place, notes:ins.data.notes||'', locationLink:ins.data.location_link||'', addedBy:ins.data.added_by_name||'', dayLabel:ins.data.day_label||'' });
+    }
+    await logActivity('demote_activity', 'moved "'+activity.activity+'" from Day '+day.dayNumber+' back to '+(dayLabel?dayLabel+'\'s suggestions':'the suggestions box'));
+    renderView();
+  }
+
   function renderDay(){
     var d = state.data;
     var day = d.days.find(function(x){return x.id===state.dayId;});
@@ -436,6 +553,11 @@
                   (a.locationLink?' &middot; <a href="'+esc(mapsLink(a.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
                   (a.notes?'<div style="font-size:11px;color:#8a8171;">'+esc(a.notes)+'</div>':'')+
                 '</span>'+
+                '<select data-demote-act="'+a.id+'" style="font-size:11px;padding:3px 4px;width:auto;flex-shrink:0;">'+
+                  '<option value="" selected disabled>&#8617; move to suggestions</option>'+
+                  '<option value="this-day">This day\'s suggestions</option>'+
+                  '<option value="unscheduled">General suggestions box</option>'+
+                '</select>'+
                 '<button class="btn-ghost" data-del-act="'+a.id+'" style="color:var(--vermillion);">&times;</button>'+
               '</div>';
             }).join('') : emptyState('No activities yet for this day.'))+
@@ -450,9 +572,13 @@
             return '<div class="card" style="padding:.75rem 1rem;">'+
               '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
                 '<div style="flex:1;"><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
+                (s.locationLink?' &middot; <a href="'+esc(mapsLink(s.locationLink))+'" target="_blank" style="color:var(--indigo);">map</a>':'')+
                 (s.notes?'<div style="font-size:12px;color:#8a8171;">'+esc(s.notes)+'</div>':'')+
                 '<div style="font-size:11px;color:var(--brass);margin-top:3px;">suggested by '+esc(s.addedBy)+'</div>'+
-                '<div style="margin-top:6px;max-width:220px;"><select data-assign-sugg="'+s.id+'" style="font-size:12px;padding:4px 6px;">'+dayOptions+'</select></div>'+
+                '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                  '<select data-assign-sugg="'+s.id+'" style="font-size:12px;padding:4px 6px;width:auto;">'+dayOptions+'</select>'+
+                  '<button class="btn-ghost" data-promote-sugg="'+s.id+'">+ add to day\'s plan</button>'+
+                '</div>'+
                 '</div>'+
                 '<button class="btn-ghost" data-del-sugg="'+s.id+'" style="color:var(--vermillion);">remove</button>'+
               '</div></div>';
@@ -493,9 +619,21 @@
         renderView();
       };
     });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-demote-act]'), function(sel){
+      sel.onchange = function(){
+        var a = day.activities.find(function(x){return x.id===sel.getAttribute('data-demote-act');});
+        if(a) demoteActivityToSuggestion(day, a, sel.value);
+      };
+    });
     document.getElementById('add-sugg-day').onclick = function(){ openSuggestionForm(thisDayLabel); };
     Array.prototype.forEach.call(root.querySelectorAll('[data-assign-sugg]'), function(sel){
       sel.onchange = function(){ assignSuggestionToDay(sel.getAttribute('data-assign-sugg'), sel.value); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-promote-sugg]'), function(b){
+      b.onclick = function(){
+        var s = d.suggestions.find(function(x){return x.id===b.getAttribute('data-promote-sugg');});
+        if(s) promoteSuggestionToActivity(day, s);
+      };
     });
     Array.prototype.forEach.call(root.querySelectorAll('[data-del-sugg]'), function(b){
       b.onclick = function(){ deleteSuggestion(b.getAttribute('data-del-sugg')); };
@@ -578,13 +716,14 @@
   function openSuggestionForm(dayLabel){
     formOverlay('Suggest a place',
       field('place','Place name','text','','e.g. Ichiran Ramen Shibuya')+
+      field('locationLink','Location (name or a maps link, optional)','text','')+
       field('notes','Notes (optional)','text',''),
       async function(vals){
         var ins = await sb.from('suggestions').insert({
-          place: vals.place, notes: vals.notes, added_by: state.profile.id, added_by_name: state.profile.display_name, day_label: dayLabel||''
+          place: vals.place, notes: vals.notes, location_link: vals.locationLink, added_by: state.profile.id, added_by_name: state.profile.display_name, day_label: dayLabel||''
         }).select().single();
         if(ins.data){
-          state.data.suggestions.push({ id:ins.data.id, place:ins.data.place, notes:ins.data.notes, addedBy:ins.data.added_by_name, dayLabel:ins.data.day_label });
+          state.data.suggestions.push({ id:ins.data.id, place:ins.data.place, notes:ins.data.notes, locationLink:ins.data.location_link||'', addedBy:ins.data.added_by_name, dayLabel:ins.data.day_label });
           await logActivity('add_suggestion', 'suggested "'+vals.place+'"'+(dayLabel?' for '+dayLabel:''));
         }
         closeOverlay(); renderView();
@@ -605,6 +744,28 @@
         if(ins.data){
           state.data.stays.push({ id:ins.data.id, name:ins.data.name, checkIn:ins.data.check_in, checkOut:ins.data.check_out, locationLink:ins.data.location_link, notes:ins.data.notes });
           await logActivity('add_stay', 'added the stay "'+vals.name+'"');
+        }
+        closeOverlay(); renderView();
+      });
+  }
+
+  function openTravelForm(){
+    formOverlay('Add travel',
+      field('name','Name (e.g. ZIPAIR, local transit)','text','','e.g. ZIPAIR ZG32')+
+      field('type','Type','text','','e.g. Flight, train, bus...')+
+      field('departureLocation','Departure location','text','','e.g. LAX')+
+      field('departureAt','Departure time','datetime-local','')+
+      field('arrivalLocation','Arrival location','text','','e.g. Narita (NRT)')+
+      field('arrivalAt','Arrival time','datetime-local','')+
+      field('notes','Notes (optional)','text',''),
+      async function(vals){
+        var ins = await sb.from('travel').insert({
+          name: vals.name, type: vals.type, departure_location: vals.departureLocation, departure_at: vals.departureAt||null,
+          arrival_location: vals.arrivalLocation, arrival_at: vals.arrivalAt||null, notes: vals.notes
+        }).select().single();
+        if(ins.data){
+          state.data.travel.push({ id:ins.data.id, name:ins.data.name, type:ins.data.type, departureLocation:ins.data.departure_location, departureAt:ins.data.departure_at, arrivalLocation:ins.data.arrival_location, arrivalAt:ins.data.arrival_at, notes:ins.data.notes });
+          await logActivity('add_travel', 'added travel "'+vals.name+'"');
         }
         closeOverlay(); renderView();
       });
