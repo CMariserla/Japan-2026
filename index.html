@@ -207,7 +207,7 @@
 
     var calCells = days.map(function(day){
       var actCount = day.activities.length;
-      return '<button class="daycell" data-open-day="'+day.id+'">'+
+      return '<button class="daycell" data-open-day="'+day.id+'" data-drop-day="'+day.id+'">'+
         '<div style="font-size:11px;color:var(--brass);font-weight:700;letter-spacing:.04em;">DAY '+day.dayNumber+'</div>'+
         '<div class="display" style="font-size:15px;margin:2px 0;">'+esc(day.city||'Unplanned')+'</div>'+
         '<div style="font-size:11px;color:#8a8171;">'+esc(fmtDate(day.date))+'</div>'+
@@ -267,13 +267,21 @@
 
         '<section class="block">'+
           '<h2 class="section-title">Suggestions <span class="tag">not yet scheduled</span></h2>'+
+          '<div style="font-size:12px;color:#8a8171;margin-bottom:.5rem;">Drag a suggestion onto a day in the calendar above, or pick a day from its dropdown, to associate it with that day.</div>'+
           '<div id="suggestions-list">'+
             (suggestions.length ? suggestions.map(function(s){
-              return '<div class="card" style="margin-bottom:.5rem;padding:.75rem 1rem;">'+
+              var dayOptions = '<option value="">Not scheduled to a day</option>'+
+                days.map(function(day){
+                  var label = 'Day '+day.dayNumber+(day.city?' ('+day.city+')':'');
+                  return '<option value="'+esc(label)+'"'+(s.dayLabel===label?' selected':'')+'>'+esc(label)+'</option>';
+                }).join('');
+              return '<div class="card" draggable="true" data-drag-sugg="'+s.id+'" style="margin-bottom:.5rem;padding:.75rem 1rem;cursor:grab;">'+
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
-                  '<div><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
+                  '<div style="flex:1;"><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
                   (s.notes?'<div style="font-size:12px;color:#8a8171;">'+esc(s.notes)+'</div>':'')+
-                  '<div style="font-size:11px;color:var(--brass);margin-top:3px;">suggested by '+esc(s.addedBy)+(s.dayLabel?' &middot; for '+esc(s.dayLabel):'')+'</div></div>'+
+                  '<div style="font-size:11px;color:var(--brass);margin-top:3px;">suggested by '+esc(s.addedBy)+'</div>'+
+                  '<div style="margin-top:6px;max-width:220px;"><select data-assign-sugg="'+s.id+'" style="font-size:12px;padding:4px 6px;">'+dayOptions+'</select></div>'+
+                  '</div>'+
                   '<button class="btn-ghost" data-del-sugg="'+s.id+'" style="color:var(--vermillion);">remove</button>'+
                 '</div></div>';
             }).join('') : emptyState('No suggestions yet.'))+
@@ -295,9 +303,32 @@
         '</section>'+
       '</div>';
 
+    async function assignSuggestionToDay(suggId, newLabel){
+      var s = d.suggestions.find(function(x){return x.id===suggId;});
+      if(!s) return;
+      await sb.from('suggestions').update({ day_label: newLabel||'' }).eq('id', suggId);
+      s.dayLabel = newLabel||'';
+      await logActivity('update_suggestion', 'moved the suggestion "'+s.place+'" to '+(newLabel||'unscheduled'));
+      renderView();
+    }
+
     wireHeader();
     Array.prototype.forEach.call(root.querySelectorAll('[data-open-day]'), function(b){
       b.onclick = function(){ state.view='day'; state.dayId=b.getAttribute('data-open-day'); renderView(); };
+      b.ondragover = function(ev){ ev.preventDefault(); };
+      b.ondrop = function(ev){
+        ev.preventDefault();
+        var suggId = ev.dataTransfer.getData('text/plain');
+        var day = days.find(function(x){return x.id===b.getAttribute('data-drop-day');});
+        if(!day) return;
+        assignSuggestionToDay(suggId, 'Day '+day.dayNumber+(day.city?' ('+day.city+')':''));
+      };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-drag-sugg]'), function(card){
+      card.ondragstart = function(ev){ ev.dataTransfer.setData('text/plain', card.getAttribute('data-drag-sugg')); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-assign-sugg]'), function(sel){
+      sel.onchange = function(){ assignSuggestionToDay(sel.getAttribute('data-assign-sugg'), sel.value); };
     });
     document.getElementById('add-day').onclick = async function(){
       var maxNum = d.days.reduce(function(m,x){return Math.max(m,x.dayNumber);},0);
@@ -473,7 +504,7 @@
     var wrap = document.createElement('div');
     wrap.id = 'form-overlay';
     wrap.innerHTML =
-      '<div style="position:absolute;inset:0;background:rgba(34,38,46,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 1rem;z-index:10;">'+
+      '<div style="position:fixed;inset:0;background:rgba(34,38,46,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 1rem;z-index:1000;overflow:auto;">'+
         '<div style="background:#fff;border-radius:8px;max-width:420px;width:100%;padding:1.25rem 1.25rem 1rem;">'+
           '<h3 class="display" style="margin:0 0 .75rem;font-size:18px;">'+esc(title)+'</h3>'+
           fieldsHtml+
@@ -483,7 +514,6 @@
           '</div>'+
         '</div>'+
       '</div>';
-    wrap.style.cssText = 'min-height:100vh;position:relative;';
     document.getElementById('app').appendChild(wrap);
     document.getElementById('form-cancel').onclick = closeOverlay;
     document.getElementById('form-save').onclick = function(){
@@ -551,9 +581,8 @@
     closeOverlay();
     var wrap = document.createElement('div');
     wrap.id = 'form-overlay';
-    wrap.style.cssText = 'min-height:100vh;position:relative;';
     wrap.innerHTML =
-      '<div style="position:absolute;inset:0;background:rgba(34,38,46,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 1rem;z-index:10;">'+
+      '<div style="position:fixed;inset:0;background:rgba(34,38,46,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 1rem;z-index:1000;overflow:auto;">'+
         '<div style="background:#fff;border-radius:8px;max-width:420px;width:100%;padding:1.25rem 1.25rem 1rem;">'+
           '<h3 class="display" style="margin:0 0 .75rem;font-size:18px;">Write a journal entry</h3>'+
           '<div style="margin-bottom:10px;"><label>Date</label><input id="j-date" type="date"/></div>'+
