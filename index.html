@@ -222,7 +222,7 @@
     allActs.sort(function(x,y){ return x.day.dayNumber-y.day.dayNumber || (x.act.time||'').localeCompare(y.act.time||''); });
 
     var journal = d.journal.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-    var suggestions = d.suggestions.slice().reverse();
+    var suggestions = d.suggestions.filter(function(s){ return !s.dayLabel; }).slice().reverse();
     var stays = d.stays.slice().sort(function(a,b){ return (a.checkIn||'').localeCompare(b.checkIn||''); });
 
     root.innerHTML = header() +
@@ -270,11 +270,7 @@
           '<div style="font-size:12px;color:#8a8171;margin-bottom:.5rem;">Drag a suggestion onto a day in the calendar above, or pick a day from its dropdown, to associate it with that day.</div>'+
           '<div id="suggestions-list">'+
             (suggestions.length ? suggestions.map(function(s){
-              var dayOptions = '<option value="">Not scheduled to a day</option>'+
-                days.map(function(day){
-                  var label = 'Day '+day.dayNumber+(day.city?' ('+day.city+')':'');
-                  return '<option value="'+esc(label)+'"'+(s.dayLabel===label?' selected':'')+'>'+esc(label)+'</option>';
-                }).join('');
+              var dayOptions = dayOptionsHtml(days, s.dayLabel);
               return '<div class="card" draggable="true" data-drag-sugg="'+s.id+'" style="margin-bottom:.5rem;padding:.75rem 1rem;cursor:grab;">'+
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
                   '<div style="flex:1;"><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
@@ -303,15 +299,6 @@
         '</section>'+
       '</div>';
 
-    async function assignSuggestionToDay(suggId, newLabel){
-      var s = d.suggestions.find(function(x){return x.id===suggId;});
-      if(!s) return;
-      await sb.from('suggestions').update({ day_label: newLabel||'' }).eq('id', suggId);
-      s.dayLabel = newLabel||'';
-      await logActivity('update_suggestion', 'moved the suggestion "'+s.place+'" to '+(newLabel||'unscheduled'));
-      renderView();
-    }
-
     wireHeader();
     Array.prototype.forEach.call(root.querySelectorAll('[data-open-day]'), function(b){
       b.onclick = function(){ state.view='day'; state.dayId=b.getAttribute('data-open-day'); renderView(); };
@@ -321,7 +308,7 @@
         var suggId = ev.dataTransfer.getData('text/plain');
         var day = days.find(function(x){return x.id===b.getAttribute('data-drop-day');});
         if(!day) return;
-        assignSuggestionToDay(suggId, 'Day '+day.dayNumber+(day.city?' ('+day.city+')':''));
+        assignSuggestionToDay(suggId, dayLabelFor(day));
       };
     });
     Array.prototype.forEach.call(root.querySelectorAll('[data-drag-sugg]'), function(card){
@@ -354,14 +341,7 @@
 
     document.getElementById('add-sugg-main').onclick = function(){ openSuggestionForm(null); };
     Array.prototype.forEach.call(root.querySelectorAll('[data-del-sugg]'), function(b){
-      b.onclick = async function(){
-        var id = b.getAttribute('data-del-sugg');
-        var s = d.suggestions.find(function(x){return x.id===id;});
-        await sb.from('suggestions').delete().eq('id', id);
-        d.suggestions = d.suggestions.filter(function(x){return x.id!==id;});
-        await logActivity('delete_suggestion', 'removed the suggestion "'+(s?s.place:'')+'"');
-        renderView();
-      };
+      b.onclick = function(){ deleteSuggestion(b.getAttribute('data-del-sugg')); };
     });
 
     document.getElementById('add-journal').onclick = function(){ openJournalForm(); };
@@ -384,12 +364,43 @@
     });
   }
 
+  function dayLabelFor(day){
+    return 'Day '+day.dayNumber+(day.city?' ('+day.city+')':'');
+  }
+
+  async function assignSuggestionToDay(suggId, newLabel){
+    var s = state.data.suggestions.find(function(x){return x.id===suggId;});
+    if(!s) return;
+    await sb.from('suggestions').update({ day_label: newLabel||'' }).eq('id', suggId);
+    s.dayLabel = newLabel||'';
+    await logActivity('update_suggestion', 'moved the suggestion "'+s.place+'" to '+(newLabel||'unscheduled'));
+    renderView();
+  }
+
+  async function deleteSuggestion(suggId){
+    var s = state.data.suggestions.find(function(x){return x.id===suggId;});
+    await sb.from('suggestions').delete().eq('id', suggId);
+    state.data.suggestions = state.data.suggestions.filter(function(x){return x.id!==suggId;});
+    await logActivity('delete_suggestion', 'removed the suggestion "'+(s?s.place:'')+'"');
+    renderView();
+  }
+
+  function dayOptionsHtml(days, selectedLabel){
+    return '<option value="">Not scheduled to a day</option>'+
+      days.map(function(day){
+        var label = dayLabelFor(day);
+        return '<option value="'+esc(label)+'"'+(selectedLabel===label?' selected':'')+'>'+esc(label)+'</option>';
+      }).join('');
+  }
+
   function renderDay(){
     var d = state.data;
     var day = d.days.find(function(x){return x.id===state.dayId;});
     if(!day){ state.view='main'; return renderView(); }
     var acts = day.activities.slice().sort(function(a,b){return (a.time||'').localeCompare(b.time||'');});
     var matchingStays = staysForDate(day.date);
+    var thisDayLabel = dayLabelFor(day);
+    var daySuggestions = d.suggestions.filter(function(s){ return s.dayLabel === thisDayLabel; });
 
     root.innerHTML = header() +
       '<div style="padding:0 1.25rem;">'+
@@ -432,9 +443,25 @@
           '<button class="btn btn-primary" id="add-act" style="margin-top:.6rem;">+ Add activity</button>'+
         '</section>'+
 
+        (daySuggestions.length ? '<section class="block">'+
+          '<h2 class="section-title">Suggestions for this day</h2>'+
+          daySuggestions.map(function(s){
+            var dayOptions = dayOptionsHtml(d.days.slice().sort(function(a,b){return a.dayNumber-b.dayNumber;}), s.dayLabel);
+            return '<div class="card" style="padding:.75rem 1rem;">'+
+              '<div style="display:flex;justify-content:space-between;align-items:flex-start;">'+
+                '<div style="flex:1;"><strong style="font-size:14px;">'+esc(s.place)+'</strong>'+
+                (s.notes?'<div style="font-size:12px;color:#8a8171;">'+esc(s.notes)+'</div>':'')+
+                '<div style="font-size:11px;color:var(--brass);margin-top:3px;">suggested by '+esc(s.addedBy)+'</div>'+
+                '<div style="margin-top:6px;max-width:220px;"><select data-assign-sugg="'+s.id+'" style="font-size:12px;padding:4px 6px;">'+dayOptions+'</select></div>'+
+                '</div>'+
+                '<button class="btn-ghost" data-del-sugg="'+s.id+'" style="color:var(--vermillion);">remove</button>'+
+              '</div></div>';
+          }).join('')+
+        '</section>' : '')+
+
         '<section class="block">'+
           '<h2 class="section-title">Have an idea for this day?</h2>'+
-          '<div style="font-size:12px;color:#8a8171;margin-bottom:.5rem;">Suggestions go to the group Suggestions box on the main page — they won\'t show up in this day\'s plan until someone adds them as a real activity above.</div>'+
+          '<div style="font-size:12px;color:#8a8171;margin-bottom:.5rem;">Suggestions show up above under "Suggestions for this day" until someone adds them as a real scheduled activity.</div>'+
           '<button class="btn" id="add-sugg-day">+ Suggest a place for day '+day.dayNumber+'</button>'+
         '</section>'+
       '</div>';
@@ -466,7 +493,13 @@
         renderView();
       };
     });
-    document.getElementById('add-sugg-day').onclick = function(){ openSuggestionForm('Day '+day.dayNumber+(day.city?' ('+day.city+')':'')); };
+    document.getElementById('add-sugg-day').onclick = function(){ openSuggestionForm(thisDayLabel); };
+    Array.prototype.forEach.call(root.querySelectorAll('[data-assign-sugg]'), function(sel){
+      sel.onchange = function(){ assignSuggestionToDay(sel.getAttribute('data-assign-sugg'), sel.value); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-del-sugg]'), function(b){
+      b.onclick = function(){ deleteSuggestion(b.getAttribute('data-del-sugg')); };
+    });
   }
 
   // ---------- ACTIVITY LOG (admin only) ----------
